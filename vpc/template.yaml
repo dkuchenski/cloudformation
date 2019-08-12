@@ -1,0 +1,354 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Networking template to build VPC/Subnets/RouteTable/NatGateway/InternetGateway
+Parameters:
+    EnvironmentName:
+        Description: Name that will be prefixed to all resources (This name will be used through the entire infrastructure stack - use something like your product name/environment)
+        Type: String
+    VpcCIDR:
+        Description: Please enter the IP range (CIDR notation) for this VPC
+        Type: String
+    PublicSubnet1CIDR:
+        Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+        Type: String
+    PublicSubnet2CIDR:
+        Description: Please enter the IP range (CIDR notation) for the public subnet in the second Availability Zone
+        Type: String
+    PublicSubnet3CIDR:
+        Description: Please enter the IP range (CIDR notation) for the public subnet in the third Availability Zone
+        Type: String
+    PrivateSubnet1CIDR:
+        Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+        Type: String
+    PrivateSubnet2CIDR:
+        Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+        Type: String
+    PrivateSubnet3CIDR:
+        Description: Please enter the IP range (CIDR notation) for the private subnet in the third Availability Zone
+        Type: String
+    CreateVPNGateway:
+        Description: Optional - Do you want to create a VPNGateway? (yes/no)
+        Type: String
+        Default: "no"
+        AllowedValues: ["yes","no"]
+    CreateVPNGatewayAsn:
+        Description: Optional - Specify private ASN number for VPN Gateway. Leave blank to use default private ASN (64512)
+        Type: String
+        Default: ""
+
+Conditions:
+    ShouldCreateVPNGateway: !Equals [!Ref CreateVPNGateway, "yes"]
+    ShouldCreateVPNGatewayAsn: !Not [!Equals [!Ref CreateVPNGatewayAsn, ""]]
+
+Resources:
+    Vpc:
+        Type: AWS::EC2::VPC
+        Properties:
+            CidrBlock: !Ref VpcCIDR
+            EnableDnsSupport: True
+            EnableDnsHostnames: True
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-vpc
+    InternetGateway:
+        Type: AWS::EC2::InternetGateway
+        Properties:
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-igw
+    InternetGatewayAttachment:
+        Type: AWS::EC2::VPCGatewayAttachment
+        Properties:
+            InternetGatewayId: !Ref InternetGateway
+            VpcId: !Ref Vpc
+    PublicSubnet1:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref Vpc
+            AvailabilityZone: !Select [ 0, !GetAZs '' ]
+            CidrBlock: !Ref PublicSubnet1CIDR
+            MapPublicIpOnLaunch: true
+            Tags:
+                - Key: Name
+                  Value:
+                      Fn::Sub:
+                          - "public-${EnvironmentName}-${SubnetAZ}"
+                          - SubnetAZ: !Select [ 0, !GetAZs '' ]
+    PublicSubnet2:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref Vpc
+            AvailabilityZone: !Select [ 1, !GetAZs '' ]
+            CidrBlock: !Ref PublicSubnet2CIDR
+            MapPublicIpOnLaunch: true
+            Tags:
+                - Key: Name
+                  Value:
+                      Fn::Sub:
+                          - "public-${EnvironmentName}-${SubnetAZ}"
+                          - SubnetAZ: !Select [ 1, !GetAZs '' ]
+    PublicSubnet3:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref Vpc
+            AvailabilityZone: !Select [ 2, !GetAZs '' ]
+            CidrBlock: !Ref PublicSubnet3CIDR
+            MapPublicIpOnLaunch: true
+            Tags:
+                - Key: Name
+                  Value:
+                      Fn::Sub:
+                          - "public-${EnvironmentName}-${SubnetAZ}"
+                          - SubnetAZ: !Select [ 2, !GetAZs '' ]
+    PrivateSubnet1:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref Vpc
+            AvailabilityZone: !Select [ 0, !GetAZs '' ]
+            CidrBlock: !Ref PrivateSubnet1CIDR
+            MapPublicIpOnLaunch: false
+            Tags:
+                - Key: Name
+                  Value:
+                      Fn::Sub:
+                          - "private-${EnvironmentName}-${SubnetAZ}"
+                          - SubnetAZ: !Select [ 0, !GetAZs '' ]
+    PrivateSubnet2:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref Vpc
+            AvailabilityZone: !Select [ 1, !GetAZs '' ]
+            CidrBlock: !Ref PrivateSubnet2CIDR
+            MapPublicIpOnLaunch: false
+            Tags:
+                - Key: Name
+                  Value:
+                      Fn::Sub:
+                          - "private-${EnvironmentName}-${SubnetAZ}"
+                          - SubnetAZ: !Select [ 1, !GetAZs '' ]
+    PrivateSubnet3:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref Vpc
+            AvailabilityZone: !Select [ 2, !GetAZs '' ]
+            CidrBlock: !Ref PrivateSubnet3CIDR
+            MapPublicIpOnLaunch: false
+            Tags:
+                - Key: Name
+                  Value:
+                      Fn::Sub:
+                          - "private-${EnvironmentName}-${SubnetAZ}"
+                          - SubnetAZ: !Select [ 2, !GetAZs '' ]
+    NatGateway1EIP:
+        Type: AWS::EC2::EIP
+        DependsOn: InternetGatewayAttachment
+        Properties:
+            Domain: vpc
+    NatGateway2EIP:
+        Type: AWS::EC2::EIP
+        DependsOn: InternetGatewayAttachment
+        Properties:
+            Domain: vpc
+    NatGateway3EIP:
+        Type: AWS::EC2::EIP
+        DependsOn: InternetGatewayAttachment
+        Properties:
+            Domain: vpc
+    NatGateway1:
+        Type: AWS::EC2::NatGateway
+        Properties:
+            AllocationId: !GetAtt NatGateway1EIP.AllocationId
+            SubnetId: !Ref PublicSubnet1
+            Tags:
+                - Key: Name
+                  Value:
+                      Fn::Sub:
+                          - "${EnvironmentName}-${SubnetAZ}-ngw"
+                          - SubnetAZ: !Select [ 0, !GetAZs '' ]
+    NatGateway2:
+        Type: AWS::EC2::NatGateway
+        Properties:
+            AllocationId: !GetAtt NatGateway2EIP.AllocationId
+            SubnetId: !Ref PublicSubnet2
+            Tags:
+                - Key: Name
+                  Value:
+                      Fn::Sub:
+                          - "${EnvironmentName}-${SubnetAZ}-ngw"
+                          - SubnetAZ: !Select [ 1, !GetAZs '' ]
+    NatGateway3:
+        Type: AWS::EC2::NatGateway
+        Properties:
+            AllocationId: !GetAtt NatGateway3EIP.AllocationId
+            SubnetId: !Ref PublicSubnet3
+            Tags:
+                - Key: Name
+                  Value:
+                      Fn::Sub:
+                          - "${EnvironmentName}-${SubnetAZ}-ngw"
+                          - SubnetAZ: !Select [ 2, !GetAZs '' ]
+    PublicRouteTable:
+        Type: AWS::EC2::RouteTable
+        Properties:
+            VpcId: !Ref Vpc
+            Tags:
+                - Key: Name
+                  Value: !Sub public-${EnvironmentName}
+    DefaultPublicRoute:
+        Type: AWS::EC2::Route
+        DependsOn: InternetGatewayAttachment
+        Properties:
+            RouteTableId: !Ref PublicRouteTable
+            DestinationCidrBlock: 0.0.0.0/0
+            GatewayId: !Ref InternetGateway
+    PublicSubnet1RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PublicRouteTable
+            SubnetId: !Ref PublicSubnet1
+    PublicSubnet2RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PublicRouteTable
+            SubnetId: !Ref PublicSubnet2
+    PublicSubnet3RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PublicRouteTable
+            SubnetId: !Ref PublicSubnet3
+    PrivateRouteTable1:
+        Type: AWS::EC2::RouteTable
+        Properties:
+            VpcId: !Ref Vpc
+            Tags:
+                - Key: Name
+                  Value:
+                      Fn::Sub:
+                          - "private-${EnvironmentName}-${SubnetAZ}"
+                          - SubnetAZ: !Select [ 0, !GetAZs '' ]
+    DefaultPrivateRoute1:
+        Type: AWS::EC2::Route
+        Properties:
+            RouteTableId: !Ref PrivateRouteTable1
+            DestinationCidrBlock: 0.0.0.0/0
+            NatGatewayId: !Ref NatGateway1
+    PrivateSubnet1RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PrivateRouteTable1
+            SubnetId: !Ref PrivateSubnet1
+    PrivateRouteTable2:
+        Type: AWS::EC2::RouteTable
+        Properties:
+            VpcId: !Ref Vpc
+            Tags:
+                - Key: Name
+                  Value:
+                      Fn::Sub:
+                          - "private-${EnvironmentName}-${SubnetAZ}"
+                          - SubnetAZ: !Select [ 1, !GetAZs '' ]
+    DefaultPrivateRoute2:
+        Type: AWS::EC2::Route
+        Properties:
+            RouteTableId: !Ref PrivateRouteTable2
+            DestinationCidrBlock: 0.0.0.0/0
+            NatGatewayId: !Ref NatGateway2
+    PrivateSubnet2RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PrivateRouteTable2
+            SubnetId: !Ref PrivateSubnet2
+    PrivateRouteTable3:
+        Type: AWS::EC2::RouteTable
+        Properties:
+            VpcId: !Ref Vpc
+            Tags:
+                - Key: Name
+                  Value:
+                      Fn::Sub:
+                          - "private-${EnvironmentName}-${SubnetAZ}"
+                          - SubnetAZ: !Select [ 2, !GetAZs '' ]
+    DefaultPrivateRoute3:
+        Type: AWS::EC2::Route
+        Properties:
+            RouteTableId: !Ref PrivateRouteTable3
+            DestinationCidrBlock: 0.0.0.0/0
+            NatGatewayId: !Ref NatGateway3
+    PrivateSubnet3RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PrivateRouteTable3
+            SubnetId: !Ref PrivateSubnet3
+    VpnGateway: 
+        Type: AWS::EC2::VPNGateway
+        Condition: ShouldCreateVPNGateway
+        Properties: 
+            Type: ipsec.1
+            AmazonSideAsn: !If [ShouldCreateVPNGatewayAsn, !Ref CreateVPNGatewayAsn, !Ref "AWS::NoValue"]
+            Tags: 
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-vpg
+    VpnGatewayAttachment:
+        Type: AWS::EC2::VPCGatewayAttachment
+        Condition: ShouldCreateVPNGateway
+        Properties:
+            VpnGatewayId: !Ref VpnGateway
+            VpcId: !Ref Vpc
+    VpnGatewayRouteProp: 
+        Type: AWS::EC2::VPNGatewayRoutePropagation
+        Condition: ShouldCreateVPNGateway
+        Properties:
+            RouteTableIds: [!Ref PublicRouteTable, !Ref PrivateRouteTable1, !Ref PrivateRouteTable2, !Ref PrivateRouteTable3]
+            VpnGatewayId: !Ref VpnGateway
+        DependsOn: VpnGatewayAttachment
+
+Outputs:
+    Vpc:
+        Description: The VPC ID
+        Value: !Ref Vpc
+        Export:
+            Name: !Sub ${EnvironmentName}-VpcId
+    VpcCIDR:
+        Description: The VPC CIDR
+        Value: !Ref VpcCIDR
+        Export:
+            Name: !Sub ${EnvironmentName}-VpcCIDR
+    PublicSubnets:
+        Description: A list of the public subnets
+        Value: !Join [ ",", [ !Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3 ]]
+        Export:
+            Name: !Sub ${EnvironmentName}-PublicSubnets
+    PrivateSubnets:
+        Description: A list of the private subnets
+        Value: !Join [ ",", [ !Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3 ]]
+        Export:
+            Name: !Sub ${EnvironmentName}-PrivateSubnets
+    PublicSubnet1:
+        Description: The subnet ID for the public subnet in the 1st Availability Zone
+        Value: !Ref PublicSubnet1
+        Export:
+            Name: !Sub ${EnvironmentName}-PublicSubnet1
+    PublicSubnet2:
+        Description: The subnet ID for the public subnet in the 2nd Availability Zone
+        Value: !Ref PublicSubnet2
+        Export:
+            Name: !Sub ${EnvironmentName}-PublicSubnet2
+    PublicSubnet3:
+        Description: The subnet ID for the public subnet in the 3rd Availability Zone
+        Value: !Ref PublicSubnet3
+        Export:
+            Name: !Sub ${EnvironmentName}-PublicSubnet3
+    PrivateSubnet1:
+        Description: The subnet ID for the private subnet in the 1st Availability Zone
+        Value: !Ref PrivateSubnet1
+        Export:
+            Name: !Sub ${EnvironmentName}-PrivateSubnet1
+    PrivateSubnet2:
+        Description: The subnet ID for the private subnet in the 2nd Availability Zone
+        Value: !Ref PrivateSubnet2
+        Export:
+            Name: !Sub ${EnvironmentName}-PrivateSubnet2
+    PrivateSubnet3:
+        Description: The subnet ID for the private subnet in the 3rd Availability Zone
+        Value: !Ref PrivateSubnet3
+        Export:
+            Name: !Sub ${EnvironmentName}-PrivateSubnet3
