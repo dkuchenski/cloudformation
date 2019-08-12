@@ -1,0 +1,254 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Application Load Balancer template
+Parameters:
+    EnvironmentName:
+        Description: Name that will be prefixed to all resources (This name will be used through the entire infrastructure stack - use something like your product name/environment)
+        Type: String
+    ServiceName:
+        Description: A unique name for the service
+        Type: String
+        AllowedPattern: "^(?!\\s*$).+"
+    LoadBalancerNetwork:
+        Description: Public or private (internal) load balancer network
+        Type: String
+        AllowedValues:
+            - public
+            - private
+    LoadBalancerPort:
+        Description: The TCP port that the load balancer listens on
+        Type: Number
+    LoadBalancerProtocol:
+        Description: The TCP protocol that the load balancer uses (HTTP for non-ssl traffic, HTTPS for ssl traffic)
+        Type: String
+        AllowedValues:
+            - HTTP
+            - HTTPS
+    LoadBalancerCertificateArn:
+    # Certificate must already exist in the AWS account
+        Description: OPTIONAL - The arn of the iam ssl certificate used with the load balancer (find arn with "aws iam list-server-certificates")
+        Type: String
+        Default: ""
+    LoadBalancerSecurityGroup:
+        Description: OPTIONAL - Use a existing security group instead of creating a new one
+        Type: String
+        Default: ""
+
+Mappings:
+    RegionalConfigs:
+        us-east-1:
+            AlbAccountId: '127311923021'
+        us-east-2:
+            AlbAccountId: '033677994240'
+        us-west-1:
+            AlbAccountId: '027434742980'
+        us-west-2:
+            AlbAccountId: '797873946194'
+        ca-central-1:
+            AlbAccountId: '985666609251'
+        eu-central-1:
+            AlbAccountId: '054676820928'
+        eu-west-1:
+            AlbAccountId: '156460612806'
+        eu-west-2:
+            AlbAccountId: '652711504416'
+        eu-west-3:
+            AlbAccountId: '009996457667'
+        eu-north-1:
+            AlbAccountId: '897822967062'
+        ap-northeast-1:
+            AlbAccountId: '582318560864'
+        ap-northeast-2:
+            AlbAccountId: '600734575887'
+        ap-northeast-3:
+            AlbAccountId: '383597477331'
+        ap-southeast-1:
+            AlbAccountId: '114774131450'
+        ap-southeast-2:
+            AlbAccountId: '783225319266'
+        ap-south-1:
+            AlbAccountId: '718504428378'
+        sa-east-1:
+            AlbAccountId: '507241528517'
+        cn-north-1:
+            AlbAccountId: '638102146993'
+        cn-northwest-1:
+            AlbAccountId: '037604701340'
+
+Conditions:
+    IsPublicLoadBalancer: !Equals [!Ref LoadBalancerNetwork, public ]
+    IsPrivateLoadBalancer: !Equals [!Ref LoadBalancerNetwork, private ]
+    EnableLoadBalancerCertificate: !Not [!Equals [!Ref LoadBalancerCertificateArn, ""]]
+    DisableLoadBalancerCertificate: !Equals [!Ref LoadBalancerCertificateArn, ""]
+    CreatePublicSecurityGroup: !And [Condition: IsPublicLoadBalancer, !Equals [!Ref LoadBalancerSecurityGroup, ""]]
+    CreatePrivateSecurityGroup: !And [Condition: IsPrivateLoadBalancer, !Equals [!Ref LoadBalancerSecurityGroup, ""]]
+
+Resources:
+    PublicSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Condition: CreatePublicSecurityGroup
+        Properties:
+            # DO NOT EDIT THE GROUP DESCRIPTION ONCE DEPLOYED - REQUIRES REPLACEMENT
+            GroupDescription: !Sub ${EnvironmentName}-${ServiceName}-public-alb-sg
+            VpcId:
+                Fn::ImportValue: !Sub ${EnvironmentName}-VpcId
+            SecurityGroupIngress:
+                - IpProtocol: tcp
+                  FromPort: !Ref LoadBalancerPort
+                  ToPort: !Ref LoadBalancerPort
+                  CidrIp: 0.0.0.0/0
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-${ServiceName}-public-alb-sg
+                - Key: env
+                  Value: !Ref EnvironmentName
+                - Key: service
+                  Value: !Ref ServiceName
+    PrivateSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Condition: CreatePrivateSecurityGroup
+        Properties:
+            # DO NOT EDIT THE GROUP DESCRIPTION ONCE DEPLOYED - REQUIRES REPLACEMENT
+            GroupDescription: !Sub ${EnvironmentName}-${ServiceName}-private-alb-sg
+            VpcId:
+                Fn::ImportValue: !Sub ${EnvironmentName}-VpcId
+            SecurityGroupIngress:
+                - IpProtocol: tcp
+                  FromPort: !Ref LoadBalancerPort
+                  ToPort: !Ref LoadBalancerPort
+                  CidrIp: 10.0.0.0/8
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-${ServiceName}-private-alb-sg
+                - Key: env
+                  Value: !Ref EnvironmentName
+                - Key: service
+                  Value: !Ref ServiceName
+    LoadBalancerS3Logs:
+        Type: AWS::S3::Bucket
+        DeletionPolicy: Delete
+        Properties:
+            Tags:
+                - Key: description
+                  Value: !Sub ${EnvironmentName}-${ServiceName}-${LoadBalancerNetwork}-alb-logs
+                - Key: env
+                  Value: !Ref EnvironmentName
+                - Key: service
+                  Value: !Ref ServiceName
+    LoadBalancerS3Policy:
+        Type: AWS::S3::BucketPolicy
+        Properties:
+            Bucket: !Ref LoadBalancerS3Logs
+            PolicyDocument:
+                Statement:
+                    -
+                        Action:
+                            - "s3:PutObject"
+                        Effect: "Allow"
+                        Resource: 
+                            - !GetAtt LoadBalancerS3Logs.Arn
+                            - Fn::Sub:
+                                - ${S3BucketArn}/*
+                                - S3BucketArn: !GetAtt LoadBalancerS3Logs.Arn
+                        Principal: 
+                            AWS: !FindInMap
+                                - RegionalConfigs
+                                - !Ref AWS::Region
+                                - AlbAccountId
+    PublicLoadBalancer:
+        Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+        Condition: IsPublicLoadBalancer
+        DependsOn: LoadBalancerS3Policy
+        Properties:
+            Scheme: internet-facing
+            Type: application
+            LoadBalancerAttributes:
+                - Key: access_logs.s3.enabled
+                  Value: True
+                - Key: access_logs.s3.bucket
+                  Value: !Ref LoadBalancerS3Logs
+            SecurityGroups:
+                - !If [CreatePublicSecurityGroup, !Ref PublicSecurityGroup, !Ref LoadBalancerSecurityGroup]
+            Subnets: 
+                Fn::Split:
+                    - ","
+                    - Fn::ImportValue: !Sub ${EnvironmentName}-PublicSubnets
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-${ServiceName}-public-alb
+                - Key: env
+                  Value: !Ref EnvironmentName
+                - Key: service
+                  Value: !Ref ServiceName
+    PrivateLoadBalancer:
+        Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+        Condition: IsPrivateLoadBalancer
+        DependsOn: LoadBalancerS3Policy
+        Properties:
+            Scheme: internal
+            Type: application
+            LoadBalancerAttributes:
+                - Key: access_logs.s3.enabled
+                  Value: True
+                - Key: access_logs.s3.bucket
+                  Value: !Ref LoadBalancerS3Logs
+            SecurityGroups:
+                - !If [CreatePrivateSecurityGroup, !Ref PrivateSecurityGroup, !Ref LoadBalancerSecurityGroup]
+            Subnets: 
+                Fn::Split:
+                    - ","
+                    - Fn::ImportValue: !Sub ${EnvironmentName}-PrivateSubnets
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-${ServiceName}-private-alb
+                - Key: env
+                  Value: !Ref EnvironmentName
+                - Key: service
+                  Value: !Ref ServiceName
+    LoadBalancerListener:
+        Type: AWS::ElasticLoadBalancingV2::Listener
+        Condition: DisableLoadBalancerCertificate
+        Properties:
+            DefaultActions:
+                - Type: fixed-response
+                  FixedResponseConfig:
+                      ContentType: "text/plain"
+                      MessageBody: "Load Balancer: Default Response"
+                      StatusCode: "200"
+            LoadBalancerArn: !If [IsPublicLoadBalancer, !Ref PublicLoadBalancer, !Ref PrivateLoadBalancer]
+            Port: !Ref LoadBalancerPort
+            Protocol: !Ref LoadBalancerProtocol
+    LoadBalancerListenerWithCertificate:
+        Type: AWS::ElasticLoadBalancingV2::Listener
+        Condition: EnableLoadBalancerCertificate
+        Properties:
+            Certificates:
+                - CertificateArn: !Ref LoadBalancerCertificateArn
+            DefaultActions:
+                - Type: fixed-response
+                  FixedResponseConfig:
+                      ContentType: "text/plain"
+                      MessageBody: "Load Balancer: Default Response"
+                      StatusCode: "200"
+            LoadBalancerArn: !If [IsPublicLoadBalancer, !Ref PublicLoadBalancer, !Ref PrivateLoadBalancer]
+            Port: !Ref LoadBalancerPort
+            Protocol: !Ref LoadBalancerProtocol
+
+Outputs:
+    LoadBalancerName:
+        Description: The Load Balancer name
+        Value: !If [IsPublicLoadBalancer, !GetAtt PublicLoadBalancer.LoadBalancerName, !GetAtt PrivateLoadBalancer.LoadBalancerName]
+        Export:
+            Name: !Sub ${EnvironmentName}-${ServiceName}-${LoadBalancerNetwork}-LoadBalancerName
+    LoadBalancerDNS:
+        Description: The Load Balancer FQDN
+        Value: !If [IsPublicLoadBalancer, !GetAtt PublicLoadBalancer.DNSName, !GetAtt PrivateLoadBalancer.DNSName]
+        Export:
+            Name: !Sub ${EnvironmentName}-${ServiceName}-${LoadBalancerNetwork}-LoadBalancerDNS
+    LoadBalancerListener:
+        Description: The Load Balancer Listener
+        Value: !If [EnableLoadBalancerCertificate, !Ref LoadBalancerListenerWithCertificate, !Ref LoadBalancerListener]
+        Export:
+            Name: !Sub ${EnvironmentName}-${ServiceName}-${LoadBalancerNetwork}-LoadBalancerListener
+    S3BucketDomainName:
+        Description: The S3 Bucket Domain Name
+        Value: !GetAtt LoadBalancerS3Logs.DomainName
